@@ -10,6 +10,10 @@ __pycache__/
 # Simulation outputs (large HDF5 files)
 *.h5
 
+# Analysis artifacts (figures and data dumps are regenerable)
+Analysis/*.png
+Analysis/*.npz
+
 # Local backups of generated inputs
 Raw/_backup_*/
 

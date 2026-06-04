@@ -45,10 +45,10 @@ def parse_args():
     ap.add_argument("--unload_t1", type=float, default=100.0, help="Unloading end time (ps)")
 
     # I/O
-    ap.add_argument("--model", type=str, default="Raw/MODEL.txt", help="Model file")
-    ap.add_argument("--target_nodes", type=str, default="Raw/targetNode.txt", help="Target nodes file")
+    ap.add_argument("--model", type=str, default="Processed/MODEL.txt", help="Model file")
+    ap.add_argument("--target_nodes", type=str, default="Processed/targetNode.txt", help="Target nodes file")
     ap.add_argument("--evector_mat", type=str, default="Processed/evector.mat", help="MAT file for evector")
-    ap.add_argument("--mass", type=str, default="Raw/mass.txt", help="Mass file (per node)")
+    ap.add_argument("--mass", type=str, default="Processed/mass.txt", help="Mass file (per node)")
     ap.add_argument("--out", type=str, default="simulation_data.h5", help="Output HDF5 filename")
 
     # Visualization and saving

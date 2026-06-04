@@ -152,7 +152,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Build simulator inputs from an OPM PDB + TM-segment text.")
     ap.add_argument("--pdb", required=True, help="OPM-aligned PDB file")
     ap.add_argument("--tm", required=True, help="Text file with OPM TM-segment lines (per chain)")
-    ap.add_argument("--outdir", default="Raw", help="Output directory")
+    ap.add_argument("--outdir", default="Processed", help="Output directory for generated inputs")
     ap.add_argument("--cutoff", type=float, default=10.0, help="Elastic-network distance cutoff (Angstrom)")
     ap.add_argument("--mass", type=float, default=1.0, help="Per-node mass value")
     ap.add_argument("--drop-hetatm", action="store_true",
