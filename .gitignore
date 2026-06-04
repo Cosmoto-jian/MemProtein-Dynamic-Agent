@@ -1,0 +1,17 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Simulation outputs (large HDF5 files)
+*.h5
+
+# Local backups of generated inputs
+Raw/_backup_*/
+
+# macOS
+.DS_Store
