@@ -1,257 +1,97 @@
+# MemProtein-Dynamic-Agent
 
-## Installation & Configuration
+膜蛋白受力形变模拟 + 残基协同运动分析。
 
-### Environment Requirements
+输入一个 [OPM 数据库](https://opm.phar.umich.edu) 的膜蛋白结构,模拟它在膜张力(径向拉伸)下的动态形变,再分析各残基的协同运动模式(瞬时相关分析)。Piezo1(6b3r)、视紫红质(1u19)、6lod 等都已验证可跑。
 
-- Python 3.7+
-- Operating systems: Windows / Linux / macOS
+> 英文文档见 [README.en.md](README.en.md)。
 
-### Install Dependencies
+## 目录结构
+
+```
+memprotein/          核心代码包(可被程序 / agent 直接 import)
+  io.py              读写输入文件(MODEL/targetNode/mass/evector)
+  preprocess.py      OPM PDB + 跨膜段文本 → 模型输入
+  simulate.py        向量式有限元(VFIFE)动态仿真
+  analysis.py        瞬时相关分析 + 四种图
+  pipeline.py        端到端编排
+cli.py               命令行总入口(run / preprocess / simulate / analyze)
+viz/animate.py       PyVista 三维形变动画(需图形界面)
+data/
+  raw/               原始输入(你下载/准备的 .pdb 和 _tm.txt)
+  inputs/            生成的模型文件(自动生成,不进 git)
+  results/           仿真结果 .h5 + 分析图(自动生成,不进 git)
+clean.sh             一键清除生成产物
+```
+
+## 安装
 
 ```bash
-# Clone or download the project
-cd VEND
-
-# Install dependencies
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
+（Python 3.10+,在 3.14 上测试通过。`pyvista`/`vtk` 仅可视化用。)
 
-**Core dependencies:**
-- `numpy` — numerical computation
-- `scipy` — scientific computing
-- `matplotlib` — data visualization
-- `h5py` — HDF5 file I/O
-- `pyvista` — 3D visualization
+## 准备输入(每个蛋白两个文件)
 
-## Usage Instructions
+1. **下载 OPM PDB** 到 `data/raw/`(把 `6lod` 换成你的 4 位 PDB ID):
+   ```bash
+   curl -L -o data/raw/6lod.pdb "https://storage.googleapis.com/opm-assets/pdb/6lod.pdb"
+   ```
+2. **复制跨膜段文本**:在该蛋白的 OPM 页面找 "Transmembrane Secondary structure segments",把每条链那几行(形如 `A - TM segments: 1(33-64), 2(...)`)复制,存成 `data/raw/6lod_tm.txt`。
 
-The complete workflow consists of four stages: **preprocessing** generates the input → the **main simulation program** solves the dynamics → **visualization** inspects structural deformation → **post-processing analysis** extracts domain-level motion patterns and functional clusters.
+## 运行
 
-### 1. Data Preprocessing (Pre_process)
-
-The three scripts under `Pre_process/` generate the input files required in `Raw/` from raw protein structure data. They have data dependencies on each other and should be run in the following order:
-
-1. **`CaCG.py`** — coarse-grains an all-atom protein PDB file from the OPM database into a Cα-residue representation and outputs `Raw/piezo-cg.pdb`. This forms the geometric basis of the whole coarse-grained model.
-2. **`Connector.py`** — reads `Raw/piezo-cg.pdb`, builds the Kirchhoff matrix based on a distance cutoff (default `cutoff = 32 Å`) to obtain the element connectivity of the elastic network model, and writes out `Raw/MODEL.txt` (node coordinates + element connectivity).
-3. **`MemRNum.py`** — extracts, from the OPM-aligned all-atom PDB, the residue numbers (after coarse-graining) of chains A/C/E that lie within the membrane according to predefined transmembrane segment ranges. These residue numbers are eventually aggregated into `Raw/targetNode.txt`, the target node list for external force loading.
-
-> All three scripts currently use hard-coded local PDB paths (the `pdb_file` variable inside each script). Update them to your local paths before running.
-
-### 2. Preparing Input Files
-
-Make sure the `Raw/` directory contains the following files:
-
-| File | Description | Format |
-|------|-------------|--------|
-| `MODEL.txt` | Node coordinates, element connectivity, boundary constraints | Text |
-| `targetNode.txt` | List of loaded node IDs | Text |
-| `mass.txt` | Mass of each node | Text |
-| `evector.mat` | Force direction vectors | MATLAB |
-
-**Example `MODEL.txt` format:**
-```
-4554                    # number of nodes
-1  -87.749  -33.498  -98.366   # NodeID  X  Y  Z (Å)
-2  -84.749  -35.791  -97.785
-...
-8123                    # number of elements
-1  1  2                 # ElementID  Node1  Node2
-...
-456                     # number of constraints
-1  1  1  1              # NodeID  fixX  fixY  fixZ (1 = fixed)
-...
-```
-
-### 3. Running the Simulation
-
-#### Basic usage
-
+**一键端到端**(预处理 → 仿真 → 4 张分析图):
 ```bash
-python main.py
+.venv/bin/python cli.py run --pdb data/raw/6lod.pdb --tm data/raw/6lod_tm.txt
 ```
 
-#### Advanced parameter configuration
-
+**分步运行**:
 ```bash
-python main.py \
-  --ET 100.0 \           # total simulation time (ps)
-  --h 0.1 \              # time step (ps)
-  --zeta 0.01 \          # damping coefficient
-  --E 1000.0 \           # Young's modulus (pN/nm²)
-  --A 0.01 \             # cross-sectional area (nm²)
-  --Fmax 0.1 \           # peak force (pN/node)
-  --ramp_t0 0.01 \       # loading start time (ps)
-  --ramp_t1 50.0 \       # peak time (ps)
-  --unload_t1 100.0 \    # unloading end time (ps)
-  --out results.h5 \     # output filename
-  --no-gui \             # disable interactive preview
-  --save-internal \      # save internal force data
-  --compress 4           # compression level (0-9)
+.venv/bin/python cli.py preprocess --pdb data/raw/6lod.pdb --tm data/raw/6lod_tm.txt
+.venv/bin/python cli.py simulate --ET 100 --Fmax 0.1
+.venv/bin/python cli.py analyze --kind all
 ```
 
-#### Headless mode (suitable for batch computation)
-
-```bash
-python main.py --no-gui --ET 200 --Fmax 0.2
-```
-
-### 4. Result Visualization
-
-After the simulation finishes, view the results with the built-in player:
-
-```bash
-# Automatically find the latest h5 file
-python Viz/animate.py
-
-# Specify a file
-python Viz/animate.py simulation_data.h5
-
-# Set the display interval (one frame every 50 steps)
-python Viz/animate.py --interval 50
-
-# View only a specific frame
-python Viz/animate.py --frame 100
-```
-
-**Visualization features:**
-- Frame-by-frame playback of structural deformation
-- Display of time and step information
-- Interactive 3D rotation and zoom
-- Clean rendering of nodes and elements
-
-## Output Data
-
-Simulation results are saved in HDF5 format (`simulation_data.h5`) and include the following datasets:
-
-### Global data
-
-| Dataset | Description | Unit |
-|---------|-------------|------|
-| `time_steps` | Time series | ps |
-| `applied_forces` | Per-node external force magnitude | pN |
-| `applied_forces_total` | Total external force | pN |
-| `extensions` | Mean extension | nm |
-| `internal_forces` | Total internal force (projection) | pN |
-| `initial_nodes` | Initial node coordinates | nm |
-| `final_nodes` | Final node coordinates | nm |
-| `elements` | Element connectivity table | - |
-| `target_nodes` | Loaded node IDs | - |
-| `evector` | Force direction vectors | - |
-
-### Time-series data (`timeseries/`)
-
-| Dataset | Shape | Unit |
-|---------|-------|------|
-| `node_coords` | (n_steps, n_nodes, 3) | m |
-| `element_connectivity` | (n_steps, n_elements, 2) | - |
-| `time` | (n_steps,) | s |
-
-### Step-by-step detailed data (`step_data/step_XXXX/`)
-
-| Dataset | Description |
-|---------|-------------|
-| `node_coordinates` | Node coordinates |
-| `element_forces` | Element axial forces |
-| `node_forces` | Per-node external force vectors |
-| `node_forces_internal` | Per-node internal force vectors |
-
-### Reading example
-
+**作为库调用**(给 agent / 脚本用):
 ```python
-import h5py
-import numpy as np
-
-with h5py.File('simulation_data.h5', 'r') as f:
-    # Read time series
-    time = f['time_steps'][:]
-    force = f['applied_forces'][:]
-    extension = f['extensions'][:]
-
-    # Read node trajectories
-    coords = f['timeseries/node_coords'][:]  # (n_steps, n_nodes, 3)
-
-    # Read a specific step
-    step = f['step_data/step_0100']
-    node_coords = step['node_coordinates'][:]
-    element_forces = step['element_forces'][:]
+from memprotein.pipeline import run
+run("data/raw/6lod.pdb", "data/raw/6lod_tm.txt")
 ```
 
-## Physical Unit System
+结果在 `data/results/`:`simulation_data.h5` + `instant_corr.png` / `distance_corr.png` / `anchor_corr.png` / `anchor_stack.png`。
 
-The program uses the piconewton–nanometer–picosecond unit system, well-suited for biomolecular scales:
-
-| Quantity | Unit | Notes |
-|----------|------|-------|
-| Length | nm (nanometer) | 1 nm = 10 Å |
-| Force | pN (piconewton) | 1 pN = 10⁻¹² N |
-| Time | ps (picosecond) | 1 ps = 10⁻¹² s |
-| Mass | Da (Dalton) | 1 Da ≈ 1.66 × 10⁻²⁷ kg |
-| Young's modulus | pN/nm² | - |
-| Cross-sectional area | nm² | - |
-
-**Unit-conversion notes:**
-- 1 pN·ps²/nm = 1 Da
-- Input coordinate unit: Å → automatically converted to nm by the program
-- Output coordinate unit: stored in meters in HDF5 (for SI consistency); convert when reading
-
-## Typical Application Case
-
-### Mechanical response of the Piezo1 ion channel
-
+**看三维动画**(需图形界面):
 ```bash
-python main.py \
-  --ET 100.0 \
-  --h 0.1 \
-  --Fmax 0.1 \
-  --E 1000.0 \
-  --A 0.01 \
-  --ramp_t0 0.01 \
-  --ramp_t1 50.0 \
-  --unload_t1 100.0
+.venv/bin/python viz/animate.py
 ```
 
-**Model parameters:**
-- Nodes: 4554
-- Elements: 8123
-- Loaded nodes: ~1520
-- Total mass: 881.1 kDa
-- Average nodal mass: 193.6 Da
+**清除生成产物**:
+```bash
+bash clean.sh
+```
 
-## Notes
+## 四种分析图
 
-1. **Time-step stability**: explicit integration must satisfy the CFL condition; `h ≤ 0.1 ps` is recommended.
-2. **Memory usage**: for large-scale models (> 5000 nodes), enabling compression options is recommended.
-3. **Convergence check**: inspect the extension–force curve for smoothness.
-4. **Element failure**: an element automatically fails (Young's modulus set to zero) when its length exceeds twice its initial length.
-5. **Boundary conditions**: fixed constraints are enforced strictly via boundary conditions.
+| 图 | 内容 |
+|---|---|
+| `instant_corr` | 抽样残基对:相关性 vs 残基间距离(多时刻叠加) |
+| `distance_corr` | 距离分箱:平均相关性的 距离 × 时间 热图 |
+| `anchor_corr` | 单个锚点 vs 其他全部残基,某时刻的散点 |
+| `anchor_stack` | 多个锚点各一行,竖排对照 |
 
-## FAQ
+相关性分两种:**C^Z**(垂直膜,升降协同,取符号 ±1)和 **C^XY**(膜平面内,夹角余弦 −1~+1)。算位移前会先对每帧做 **Kabsch 刚体对齐**,去掉整体平移/转动造成的假协同。
 
-**Q: The simulation is slow — what can I do?**
-A: Increase the time step, reduce output frequency, or run in headless (no-GUI) mode.
+## 关键参数
 
-**Q: How do I change material parameters?**
-A: Use the command-line flags `--E` and `--A` to adjust Young's modulus and cross-sectional area.
+仿真(`cli.py run/simulate`):`--ET` 总时长(ps)、`--h` 时间步、`--Fmax` 峰值力(pN)、`--E` 杨氏模量、`--A` 截面积、`--zeta` 阻尼、`--ramp-t1`/`--unload-t1` 三角波加载时刻。
+预处理:`--cutoff` 弹性网络连接半径(默认 10 Å)、`--include-hetatm`(默认排除脂/配体/UNK 等非蛋白原子)。
 
-**Q: The visualization window does not show up.**
-A: Pass `--no-gui` to skip the interactive preview, or verify your PyVista installation.
+## 方法学要点
 
-**Q: How do I extract the trajectory of a specific node?**
-A: Read `timeseries/node_coords` through the HDF5 interface.
-
-
-## Theoretical Background
-
-For detailed theoretical derivations, see:
-- Ting, E.C., et al. (2004). "Fundamentals of a Vector Form Intrinsic Finite Element"
-- Vector-form finite element theory: principal-axis vectors track element spatial motion and remove rigid-body effects
-- Elastic network model: coarse-grained representation (cutoff = 10 Å)
-- Central difference method: a conditionally stable explicit time-integration scheme
-
-## License
-
-This project is released under the MIT License — see the LICENSE file for details.
-
----
-
-**Last updated:** 20260603
+- **粗粒化**:每个氨基酸残基用其 Cα 当一个珠子(节点)。
+- **弹性网络**:距离 <10 Å 的残基对用弹簧连接(单元)。
+- **加力**:膜内残基(由 OPM 跨膜段确定)沿膜平面径向往外拉,模拟膜张力。
+- **积分**:中心差分显式时间积分(向量化,比逐元素循环快约 26 倍)。
+- **分析**:对每帧、每对残基算瞬时运动方向相关性,看协同如何随距离/时间演化。

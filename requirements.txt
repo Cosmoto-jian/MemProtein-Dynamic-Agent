@@ -1,17 +1,11 @@
-# VEND - Vector-form Finite Element Dynamics Simulator
-# Requirements for Piezo1 Ion Channel Protein Dynamics Simulation
-# Python 3.7+
+# MemProtein — membrane-protein force-deformation simulation & analysis
+# Python 3.10+ (tested on 3.14)
 
-# Core scientific computing libraries
-numpy>=1.19.0,<2.0.0
-scipy>=1.5.0
+numpy>=1.23        # numpy 2.x is fine and required on Python 3.13+
+scipy>=1.10
+matplotlib>=3.6
+h5py>=3.7
 
-# Visualization libraries
-matplotlib>=3.3.0
-pyvista>=0.34.0
-
-# Data storage and I/O
-h5py>=3.0.0
-
-# Additional dependencies for PyVista
-vtk>=9.0.0
+# Visualization only (viz/animate.py); needs a display
+pyvista>=0.43
+vtk>=9.2
