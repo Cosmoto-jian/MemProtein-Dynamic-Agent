@@ -45,9 +45,38 @@ def load_trajectory(h5_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return coords, time, target
 
 
-def displacements(coords: np.ndarray, ref: int = 0
+def superpose(coords: np.ndarray, ref: int = 0) -> np.ndarray:
+    """Rigid-body align every frame onto frame `ref` (Kabsch / SVD): remove the
+    overall translation and rotation. Returns aligned coords (T, N, 3).
+
+    Inter-residue distances are rigid-body invariants, so they are unchanged;
+    only the displacement field (and thus the correlations) is affected. This
+    stops whole-protein drift/tumbling from leaking in as spurious coordination.
+    """
+    Q = coords[ref]
+    qc = Q.mean(axis=0)
+    Q0 = Q - qc
+    out = np.empty_like(coords)
+    for i in range(coords.shape[0]):
+        P0 = coords[i] - coords[i].mean(axis=0)
+        H = P0.T @ Q0
+        U, S, Vt = np.linalg.svd(H)
+        d = np.sign(np.linalg.det(Vt.T @ U.T))     # reflection correction
+        R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T     # rotation mapping P0 -> Q0
+        out[i] = P0 @ R.T + qc
+    return out
+
+
+def displacements(coords: np.ndarray, ref: int = 0, align: bool = True
                   ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Per-frame displacement components relative to frame `ref`; (T, N) each."""
+    """Per-frame displacement components relative to frame `ref`; (T, N) each.
+
+    With align=True (default) each frame is first rigid-body superposed onto the
+    reference, so overall translation/rotation do not contaminate the
+    correlations. Set align=False to use raw coordinates.
+    """
+    if align:
+        coords = superpose(coords, ref)
     d = coords - coords[ref]
     return d[:, :, 0], d[:, :, 1], d[:, :, 2]
 
