@@ -28,7 +28,7 @@ Design notes / decisions (validated against the original Piezo1 6b3r setup):
                  had fix flags 0 0 0, i.e. no-ops).
 
 Usage:
-    python build_inputs.py --pdb Raw/6b3r.pdb --tm Raw/6b3r_tm.txt --outdir Raw
+    python build_inputs.py --pdb Raw/6b3r.pdb --tm Raw/6b3r_tm.txt --outdir Processed
 """
 
 import argparse

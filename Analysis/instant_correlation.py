@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Instantaneous correlation analysis of a deformation trajectory.
+Instantaneous correlation vs inter-residue distance.
 
-Implements the "single-step instantaneous correlation" methodology: for each
-output frame t, measure how coordinated two residues' motions are, relative to
-the t=0 reference structure.
+For a chosen time (or several), measure how coordinated each residue pair's
+motion is, relative to the t=0 reference structure, and plot it against the
+pair's reference separation distance:
 
     displacement   Dx_i(t) = x_i(t) - x_i(0)   (same for Dy, Dz)
 
@@ -15,14 +15,13 @@ the t=0 reference structure.
     XY-plane correlation (2-D in-plane coordination):
         C^XY_ij(t) = (Dx_i*Dx_j + Dy_i*Dy_j)
                      / ( |D_xy,i| * |D_xy,j| )            in [-1, +1]
-                   = cosine of the angle between the two in-plane
-                     displacement vectors
 
-Outputs per residue pair (i, j) two time series C^Z_ij(t) and C^XY_ij(t).
-A sliding-window average is available to suppress thermal high-frequency noise.
+The figure has two panels (C^Z and C^XY); in both the x-axis is the
+inter-residue distance d_ij (nm at t=0) and each point is one residue pair,
+coloured by the time at which it was evaluated. This shows how coordination
+decays / switches with separation, and how that changes over time.
 
-This module is the post-processing stage of the pipeline; it consumes the
-simulation_data.h5 produced by main_fast.py.
+This module is the post-processing stage; it consumes simulation_data.h5.
 """
 
 import argparse
@@ -37,13 +36,8 @@ import matplotlib.pyplot as plt
 
 
 def load_trajectory(h5_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load the node trajectory from an HDF5 result file.
-
-    Returns:
-        coords (T, N, 3) in nm
-        time   (T,)      in ps
-        target (M,)      1-based ids of the force-loaded (membrane) nodes
-    """
+    """Load the node trajectory. Returns coords (T,N,3) nm, time (T,) ps,
+    and the 1-based ids of the force-loaded (membrane) nodes."""
     with h5py.File(h5_path, "r") as f:
         coords = f["timeseries/node_coords"][:] * 1e9  # m -> nm
         time = f["timeseries/time"][:] * 1e12          # s -> ps
@@ -53,21 +47,14 @@ def load_trajectory(h5_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def displacements(coords: np.ndarray, ref: int = 0
                   ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Per-frame displacement components relative to frame `ref`.
-
-    Returns dx, dy, dz, each of shape (T, N).
-    """
+    """Per-frame displacement components relative to frame `ref`; (T, N) each."""
     d = coords - coords[ref]
     return d[:, :, 0], d[:, :, 1], d[:, :, 2]
 
 
 def corr_z_pairs(dz: np.ndarray, pairs: np.ndarray) -> np.ndarray:
-    """C^Z_ij(t) for each pair: sign of the product of the two z-displacements.
-
-    pairs: (P, 2) array of 0-based node indices.
-    Returns (T, P) array of values in {-1, 0, +1}; 0 when either displacement
-    is ~0 (sign undefined).
-    """
+    """C^Z for each pair: sign of the product of the two z-displacements.
+    Returns (T, P) in {-1, 0, +1}; 0 when either displacement is ~0."""
     a = dz[:, pairs[:, 0]]
     b = dz[:, pairs[:, 1]]
     out = np.sign(a * b)
@@ -76,11 +63,8 @@ def corr_z_pairs(dz: np.ndarray, pairs: np.ndarray) -> np.ndarray:
 
 
 def corr_xy_pairs(dx: np.ndarray, dy: np.ndarray, pairs: np.ndarray) -> np.ndarray:
-    """C^XY_ij(t) for each pair: cosine between in-plane displacement vectors.
-
-    Returns (T, P) array in [-1, +1]; 0 when either in-plane displacement has
-    ~0 magnitude (angle undefined).
-    """
+    """C^XY for each pair: cosine between in-plane displacement vectors.
+    Returns (T, P) in [-1, +1]; 0 when either in-plane displacement is ~0."""
     ax, ay = dx[:, pairs[:, 0]], dy[:, pairs[:, 0]]
     bx, by = dx[:, pairs[:, 1]], dy[:, pairs[:, 1]]
     num = ax * bx + ay * by
@@ -92,11 +76,7 @@ def corr_xy_pairs(dx: np.ndarray, dy: np.ndarray, pairs: np.ndarray) -> np.ndarr
 
 
 def sliding_window(series: np.ndarray, w: int) -> np.ndarray:
-    """Centered moving average along the time axis (axis 0).
-
-    w is the window size in frames; w <= 1 returns the series unchanged.
-    This is the low-pass denoising of section 6 of the methodology.
-    """
+    """Centered moving average along the time axis (axis 0); w<=1 is a no-op."""
     if w <= 1:
         return series
     kernel = np.ones(w) / w
@@ -104,37 +84,30 @@ def sliding_window(series: np.ndarray, w: int) -> np.ndarray:
 
 
 def delta_corr(series: np.ndarray) -> np.ndarray:
-    """Frame-to-frame change |C(t) - C(t-1)|; large values flag conformational
-    transition points (section 5.2). Returns (T, P) with row 0 = 0."""
+    """Frame-to-frame change |C(t) - C(t-1)|; flags transition points."""
     out = np.zeros_like(series)
     out[1:] = np.abs(np.diff(series, axis=0))
     return out
 
 
-def select_demo_pairs(coords0: np.ndarray, target: np.ndarray) -> np.ndarray:
-    """Pick representative pairs spanning a range of inter-residue distances.
-
-    Anchors on the first force-loaded node and pairs it with partners at the
-    10/30/50/70/90th distance percentiles, so the output shows how coordination
-    changes with separation. Returns (P, 2) array of 0-based node indices.
-    """
-    tgt0 = target - 1  # to 0-based
-    anchor = tgt0[0]
-    others = tgt0[1:]
-    dist = np.linalg.norm(coords0[others] - coords0[anchor], axis=1)
-    order = np.argsort(dist)
-    pcts = [10, 30, 50, 70, 90]
-    picks = [others[order[int(p / 100 * (len(order) - 1))]] for p in pcts]
-    return np.array([[anchor, p] for p in picks], dtype=int)
+def sample_pairs(n_nodes: int, n_sample: int, seed: int) -> np.ndarray:
+    """Random distinct residue pairs (P, 2) as 0-based node indices."""
+    rng = np.random.default_rng(seed)
+    i = rng.integers(0, n_nodes, n_sample)
+    j = rng.integers(0, n_nodes, n_sample)
+    keep = i != j
+    return np.stack([i[keep], j[keep]], axis=1)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Instantaneous correlation analysis of a trajectory.")
+    ap = argparse.ArgumentParser(description="Instantaneous correlation vs inter-residue distance.")
     ap.add_argument("--h5", default="simulation_data.h5", help="Simulation HDF5 file")
-    ap.add_argument("--pairs", default=None,
-                    help="Comma-separated 1-based node pairs 'i-j,i-j'; default = auto demo pairs")
+    ap.add_argument("--times", default="50",
+                    help="Comma-separated times (ps) at which to evaluate, e.g. '10,50,100'")
     ap.add_argument("--ref", type=int, default=0, help="Reference frame index (t=0)")
-    ap.add_argument("--window", type=int, default=1, help="Sliding-window size (frames) for denoising")
+    ap.add_argument("--n-sample", type=int, default=8000, help="Number of residue pairs to plot")
+    ap.add_argument("--dmax", type=float, default=0.0, help="Max distance to show (nm); 0 = all")
+    ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="Analysis/instant_corr", help="Output prefix (.png and .npz)")
     args = ap.parse_args()
 
@@ -142,53 +115,64 @@ def main() -> None:
     root = os.path.dirname(here)
     h5_path = args.h5 if os.path.isabs(args.h5) else os.path.join(root, args.h5)
 
-    coords, time, target = load_trajectory(h5_path)
+    coords, time, _ = load_trajectory(h5_path)
     print(f"Loaded trajectory: {coords.shape[0]} frames, {coords.shape[1]} nodes, "
           f"{time[0]:.1f}-{time[-1]:.1f} ps")
 
+    # requested times -> nearest frame indices
+    want = [float(t) for t in args.times.split(",")]
+    frames = [int(np.argmin(np.abs(time - t))) for t in want]
+    print("Evaluating at times (ps): " + ", ".join(f"{time[f]:.1f}" for f in frames))
+
+    pairs = sample_pairs(coords.shape[1], args.n_sample, args.seed)
+    print(f"{len(pairs)} residue pairs sampled (of {coords.shape[1]} nodes; "
+          f"plotting all of them would be ~{coords.shape[1]*(coords.shape[1]-1)//2//10**6}M pairs)")
+
     dx, dy, dz = displacements(coords, ref=args.ref)
-    coords0 = coords[args.ref]
+    cz = corr_z_pairs(dz, pairs)        # (T, P)
+    cxy = corr_xy_pairs(dx, dy, pairs)  # (T, P)
 
-    if args.pairs:
-        pairs = np.array([[int(a) - 1, int(b) - 1]
-                          for a, b in (p.split("-") for p in args.pairs.split(","))], dtype=int)
-    else:
-        pairs = select_demo_pairs(coords0, target)
-        print("Auto-selected demo pairs (1-based node ids, by distance):")
-        for i, j in pairs:
-            d = np.linalg.norm(coords0[i] - coords0[j])
-            print(f"  {i + 1:>5d} - {j + 1:<5d}  (distance {d:.1f} nm)")
+    def dist_at(frame: int) -> np.ndarray:
+        """Actual inter-residue distance of each pair AT this frame (nm)."""
+        c = coords[frame]
+        return np.linalg.norm(c[pairs[:, 0]] - c[pairs[:, 1]], axis=1)
 
-    cz = corr_z_pairs(dz, pairs)
-    cxy = corr_xy_pairs(dx, dy, pairs)
-    if args.window > 1:
-        cz = sliding_window(cz, args.window)
-        cxy = sliding_window(cxy, args.window)
-
-    # ---- plot ----
+    # ---- plot: correlation vs inter-residue distance ----
     out_png = (args.out if os.path.isabs(args.out) else os.path.join(root, args.out)) + ".png"
     out_npz = (args.out if os.path.isabs(args.out) else os.path.join(root, args.out)) + ".npz"
     os.makedirs(os.path.dirname(out_png), exist_ok=True)
 
-    fig, (axz, axxy) = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-    for k in range(pairs.shape[0]):
-        d = np.linalg.norm(coords0[pairs[k, 0]] - coords0[pairs[k, 1]])
-        label = f"{pairs[k,0]+1}-{pairs[k,1]+1} ({d:.1f} nm)"
-        axz.plot(time, cz[:, k], lw=1.2, label=label)
-        axxy.plot(time, cxy[:, k], lw=1.2, label=label)
-    axz.set_ylabel("C$^Z$ (sign)"); axz.set_ylim(-1.2, 1.2)
-    axz.set_title("Instantaneous Z-axis correlation (up/down coordination)")
-    axz.axhline(0, color="gray", lw=0.5); axz.legend(fontsize=8, ncol=2)
-    axxy.set_ylabel("C$^{XY}$ (cosine)"); axxy.set_ylim(-1.2, 1.2)
-    axxy.set_title("Instantaneous XY-plane correlation (in-plane coordination)")
-    axxy.set_xlabel("time (ps)"); axxy.axhline(0, color="gray", lw=0.5)
-    win_note = f" (sliding window = {args.window} frames)" if args.window > 1 else ""
-    fig.suptitle(f"Instantaneous correlation analysis{win_note}")
+    cmap = plt.get_cmap("viridis")
+    colors = [cmap(k / max(1, len(frames) - 1)) for k in range(len(frames))]
+
+    dist_per_frame = []
+    fig, (axz, axxy) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+    for k, fr in enumerate(frames):
+        lab = f"{time[fr]:.0f} ps"
+        d_fr = dist_at(fr)                 # distance AT this time
+        dist_per_frame.append(d_fr)
+        sel = d_fr <= args.dmax if args.dmax > 0 else slice(None)
+        # small vertical jitter for C^Z (values are only -1/0/+1) so density shows
+        jitter = (np.random.default_rng(args.seed + k).random(len(pairs)) - 0.5) * 0.12
+        axz.scatter(d_fr[sel], (cz[fr] + jitter)[sel], s=4, alpha=0.25, color=colors[k], label=lab)
+        axxy.scatter(d_fr[sel], cxy[fr][sel], s=4, alpha=0.25, color=colors[k], label=lab)
+    axz.set_ylabel("C$^Z$ (sign, jittered)"); axz.set_ylim(-1.3, 1.3)
+    axz.set_title("Z-axis correlation vs inter-residue distance (up/down)")
+    axz.axhline(0, color="gray", lw=0.5)
+    leg = axz.legend(title="time", markerscale=3, fontsize=9);
+    for lh in leg.legend_handles: lh.set_alpha(1)
+    axxy.set_ylabel("C$^{XY}$ (cosine)"); axxy.set_ylim(-1.1, 1.1)
+    axxy.set_title("XY-plane correlation vs inter-residue distance (in-plane)")
+    axxy.set_xlabel("inter-residue distance d (nm, at that time)")
+    axxy.axhline(0, color="gray", lw=0.5)
+    fig.suptitle("Instantaneous correlation vs distance")
     fig.tight_layout()
     fig.savefig(out_png, dpi=130)
     print(f"Saved figure: {out_png}")
 
-    np.savez(out_npz, time=time, pairs=pairs + 1, C_Z=cz, C_XY=cxy)
+    np.savez(out_npz, times_ps=np.array([time[f] for f in frames]),
+             distance_per_time=np.array(dist_per_frame), pairs=pairs + 1,
+             C_Z=cz[frames], C_XY=cxy[frames])
     print(f"Saved data:   {out_npz}")
 
 
