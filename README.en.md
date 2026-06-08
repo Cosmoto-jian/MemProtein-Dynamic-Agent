@@ -5,7 +5,7 @@ Membrane-protein force-deformation simulation + residue co-motion analysis.
 Given a membrane-protein structure from the [OPM database](https://opm.phar.umich.edu),
 simulate its dynamic deformation under membrane tension (radial stretching), then
 analyse how residues move in a coordinated way (instantaneous correlation
-analysis). Verified on Piezo1 (6b3r), rhodopsin (1u19), 6lod, and others.
+analysis). Verified on Piezo1 (6b3r), rhodopsin (1u19), 6w7b, and others.
 
 > 中文文档见 [README.md](README.md).
 
@@ -37,24 +37,24 @@ python3 -m venv .venv
 
 ## Prepare inputs (two files per protein)
 
-1. **Download the OPM PDB** into `data/raw/` (replace `6lod` with your 4-letter PDB id):
+1. **Download the OPM PDB** into `data/raw/` (replace `6b3r` with your 4-letter PDB id):
    ```bash
-   curl -L -o data/raw/6lod.pdb "https://storage.googleapis.com/opm-assets/pdb/6lod.pdb"
+   curl -L -o data/raw/6b3r.pdb "https://storage.googleapis.com/opm-assets/pdb/6b3r.pdb"
    ```
 2. **Copy the TM-segment text**: on the protein's OPM page find "Transmembrane
    Secondary structure segments" and copy the per-chain lines
-   (`A - TM segments: 1(33-64), 2(...)`) into `data/raw/6lod_tm.txt`.
+   (`A - TM segments: 1(33-64), 2(...)`) into `data/raw/6b3r_tm.txt`.
 
 ## Run
 
 End-to-end (preprocess -> simulate -> 4 figures):
 ```bash
-.venv/bin/python cli.py run --pdb data/raw/6lod.pdb --tm data/raw/6lod_tm.txt
+.venv/bin/python cli.py run --pdb data/raw/6b3r.pdb --tm data/raw/6b3r_tm.txt
 ```
 
 Individual stages:
 ```bash
-.venv/bin/python cli.py preprocess --pdb data/raw/6lod.pdb --tm data/raw/6lod_tm.txt
+.venv/bin/python cli.py preprocess --pdb data/raw/6b3r.pdb --tm data/raw/6b3r_tm.txt
 .venv/bin/python cli.py simulate --ET 100 --Fmax 0.1
 .venv/bin/python cli.py analyze --kind all
 ```
@@ -62,7 +62,7 @@ Individual stages:
 As a library:
 ```python
 from memprotein.pipeline import run
-run("data/raw/6lod.pdb", "data/raw/6lod_tm.txt")
+run("data/raw/6b3r.pdb", "data/raw/6b3r_tm.txt")
 ```
 
 Outputs land in `data/results/`: `simulation_data.h5` plus

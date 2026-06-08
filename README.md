@@ -2,7 +2,7 @@
 
 膜蛋白受力形变模拟 + 残基协同运动分析。
 
-输入一个 [OPM 数据库](https://opm.phar.umich.edu) 的膜蛋白结构,模拟它在膜张力(径向拉伸)下的动态形变,再分析各残基的协同运动模式(瞬时相关分析)。Piezo1(6b3r)、视紫红质(1u19)、6lod 等都已验证可跑。
+输入一个 [OPM 数据库](https://opm.phar.umich.edu) 的膜蛋白结构,模拟它在膜张力(径向拉伸)下的动态形变,再分析各残基的协同运动模式(瞬时相关分析)。Piezo1(6b3r)、视紫红质(1u19)、6w7b 等都已验证可跑。
 
 > 英文文档见 [README.en.md](README.en.md)。
 
@@ -34,22 +34,22 @@ python3 -m venv .venv
 
 ## 准备输入(每个蛋白两个文件)
 
-1. **下载 OPM PDB** 到 `data/raw/`(把 `6lod` 换成你的 4 位 PDB ID):
+1. **下载 OPM PDB** 到 `data/raw/`(把 `6b3r` 换成你的 4 位 PDB ID):
    ```bash
-   curl -L -o data/raw/6lod.pdb "https://storage.googleapis.com/opm-assets/pdb/6lod.pdb"
+   curl -L -o data/raw/6b3r.pdb "https://storage.googleapis.com/opm-assets/pdb/6b3r.pdb"
    ```
-2. **复制跨膜段文本**:在该蛋白的 OPM 页面找 "Transmembrane Secondary structure segments",把每条链那几行(形如 `A - TM segments: 1(33-64), 2(...)`)复制,存成 `data/raw/6lod_tm.txt`。
+2. **复制跨膜段文本**:在该蛋白的 OPM 页面找 "Transmembrane Secondary structure segments",把每条链那几行(形如 `A - TM segments: 1(33-64), 2(...)`)复制,存成 `data/raw/6b3r_tm.txt`。
 
 ## 运行
 
 **一键端到端**(预处理 → 仿真 → 4 张分析图):
 ```bash
-.venv/bin/python cli.py run --pdb data/raw/6lod.pdb --tm data/raw/6lod_tm.txt
+.venv/bin/python cli.py run --pdb data/raw/6b3r.pdb --tm data/raw/6b3r_tm.txt
 ```
 
 **分步运行**:
 ```bash
-.venv/bin/python cli.py preprocess --pdb data/raw/6lod.pdb --tm data/raw/6lod_tm.txt
+.venv/bin/python cli.py preprocess --pdb data/raw/6b3r.pdb --tm data/raw/6b3r_tm.txt
 .venv/bin/python cli.py simulate --ET 100 --Fmax 0.1
 .venv/bin/python cli.py analyze --kind all
 ```
@@ -57,7 +57,7 @@ python3 -m venv .venv
 **作为库调用**(给 agent / 脚本用):
 ```python
 from memprotein.pipeline import run
-run("data/raw/6lod.pdb", "data/raw/6lod_tm.txt")
+run("data/raw/6b3r.pdb", "data/raw/6b3r_tm.txt")
 ```
 
 结果在 `data/results/`:`simulation_data.h5` + `instant_corr.png` / `distance_corr.png` / `anchor_corr.png` / `anchor_stack.png`。
