@@ -115,11 +115,16 @@ def build_inputs(pdb_path: str, tm_path: str, out_dir: str = "data/inputs",
         "target": os.path.join(out_dir, "targetNode.txt"),
         "mass": os.path.join(out_dir, "mass.txt"),
         "evector": os.path.join(out_dir, "evector.mat"),
+        "meta": os.path.join(out_dir, "nodes.npz"),
     }
     write_model_file(paths["model"], coords, elements, constraints)
     np.savetxt(paths["target"], target[np.newaxis, :], fmt="%d")
     np.savetxt(paths["mass"], np.full(len(coords), mass), fmt="%g")
     save_evector(paths["evector"], evector)
+    # node identity (chain + residue number), so downstream never has to re-parse
+    # the PDB and risk index mismatch
+    np.savez(paths["meta"], chain=np.array(chains, dtype="U4"),
+             resid=np.array(resids, dtype=int))
 
     return {
         "n_nodes": len(coords),

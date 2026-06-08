@@ -72,7 +72,11 @@ run("data/raw/6lod.pdb", "data/raw/6lod_tm.txt")
 bash clean.sh
 ```
 
-## 四种分析图
+## 分析
+
+相关性分两种:**C^Z**(垂直膜,升降协同,取符号 ±1)和 **C^XY**(膜平面内,夹角余弦 −1~+1)。算位移前会先对每帧做 **Kabsch 刚体对齐**,去掉整体平移/转动造成的假协同。
+
+`cli.py analyze` 出四张基础图:
 
 | 图 | 内容 |
 |---|---|
@@ -81,7 +85,19 @@ bash clean.sh
 | `anchor_corr` | 单个锚点 vs 其他全部残基,某时刻的散点 |
 | `anchor_stack` | 多个锚点各一行,竖排对照 |
 
-相关性分两种:**C^Z**(垂直膜,升降协同,取符号 ±1)和 **C^XY**(膜平面内,夹角余弦 −1~+1)。算位移前会先对每帧做 **Kabsch 刚体对齐**,去掉整体平移/转动造成的假协同。
+`memprotein.analysis` 里还有更多可编程调用的函数(都支持 `node_subset` 单链限定、`align` 刚体对齐开关):
+
+| 函数 | 内容 |
+|---|---|
+| `correlation_vs_distance` | 散点:相关性 vs 距离(可传 `pairs` 画全部对) |
+| `correlation_hexbin` | 密度图(点多时不糊) |
+| `correlation_binned` | 单时刻分箱平均线(看趋势) |
+| `binned_multitime` | 多时刻分箱均线叠加;`realtime=` 切换 x 轴用 t=0 距离 / 各时刻实时距离 |
+| `chain_nodes(h5, "A")` | 取某条链的节点(从结果文件直接读链信息) |
+
+**单链分析脚本** `instant_one_chain.py`:只分析一条链(适合对称多聚体),顶部 CONFIG 改 `CHAIN` / `TIMES` / `N_SAMPLE`(`0`=全部对)即可,跑 `.venv/bin/python instant_one_chain.py`。
+
+**节点身份**:结果文件 `simulation_data.h5` 里存了每个节点的链(`node_chains`)和残基号(`node_resids`),分析按链/残基选取时直接读它,不会和粗粒化序号错位。
 
 ## 关键参数
 

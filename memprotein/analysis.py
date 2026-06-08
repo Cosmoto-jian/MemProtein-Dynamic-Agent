@@ -39,6 +39,31 @@ def load_trajectory(h5_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return coords, time, target
 
 
+def load_node_meta(h5_path: str):
+    """Return (chains, resids) per node from the result file, or (None, None) if
+    the file predates node-identity storage. Chains is a list[str], resids an
+    int array; index i corresponds to node i (same order as node_coords)."""
+    with h5py.File(h5_path, "r") as f:
+        if "node_chains" not in f:
+            return None, None
+        chains = [c.decode() for c in f["node_chains"][:]]
+        resids = f["node_resids"][:]
+    return chains, resids
+
+
+def chain_nodes(h5_path: str, chain: str) -> np.ndarray:
+    """0-based node indices belonging to `chain`, read straight from the result
+    file (no PDB re-parsing, so no chance of index mismatch)."""
+    chains, _ = load_node_meta(h5_path)
+    if chains is None:
+        raise ValueError("This result file has no node identity; regenerate it "
+                         "with the current pipeline.")
+    nodes = np.array([i for i, c in enumerate(chains) if c == chain])
+    if len(nodes) == 0:
+        raise ValueError(f"chain {chain!r} not found; available: {sorted(set(chains))}")
+    return nodes
+
+
 def superpose(coords: np.ndarray, ref: int = 0) -> np.ndarray:
     """Rigid-body align every frame onto frame `ref` (Kabsch/SVD). Distances are
     unchanged; only the displacement field is affected."""
@@ -82,10 +107,19 @@ def corr_xy_pairs(dx: np.ndarray, dy: np.ndarray, pairs: np.ndarray) -> np.ndarr
     return out
 
 
-def sample_pairs(n_nodes: int, n_sample: int, seed: int = 0) -> np.ndarray:
+def sample_pairs(n_nodes: int, n_sample: int, seed: int = 0,
+                 pool: Optional[np.ndarray] = None) -> np.ndarray:
+    """Random distinct residue pairs (P,2) as 0-based indices. If `pool` is
+    given, both members are drawn only from that set of node indices (e.g. a
+    single chain)."""
     rng = np.random.default_rng(seed)
-    i = rng.integers(0, n_nodes, n_sample)
-    j = rng.integers(0, n_nodes, n_sample)
+    if pool is None:
+        i = rng.integers(0, n_nodes, n_sample)
+        j = rng.integers(0, n_nodes, n_sample)
+    else:
+        pool = np.asarray(pool)
+        i = pool[rng.integers(0, len(pool), n_sample)]
+        j = pool[rng.integers(0, len(pool), n_sample)]
     keep = i != j
     return np.stack([i[keep], j[keep]], axis=1)
 
@@ -104,14 +138,25 @@ def _save(out: str, fig, **npz):
 def correlation_vs_distance(h5_path: str, times: Sequence[float] = (10, 50, 100),
                             n_sample: int = 8000, ref: int = 0, dmax: float = 0.0,
                             seed: int = 0, align: bool = True,
+                            node_subset: Optional[np.ndarray] = None,
+                            pairs: Optional[np.ndarray] = None,
                             out: str = "data/results/instant_corr") -> str:
     """Scatter of C^Z / C^XY vs inter-residue distance (at that time), for
-    several times overlaid."""
+    several times overlaid.
+
+    If node_subset (0-based indices) is given, only pairs within that set are
+    sampled (e.g. a single chain). Pass `pairs` (P,2) directly to use a specific
+    set (e.g. ALL pairs). Correlations are computed only at the requested times,
+    so very large pair counts stay memory-bounded.
+    """
     coords, time, _ = load_trajectory(h5_path)
     frames = [int(np.argmin(np.abs(time - t))) for t in times]
-    pairs = sample_pairs(coords.shape[1], n_sample, seed)
+    if pairs is None:
+        pairs = sample_pairs(coords.shape[1], n_sample, seed, pool=node_subset)
     dx, dy, dz = displacements(coords, ref, align)
-    cz, cxy = corr_z_pairs(dz, pairs), corr_xy_pairs(dx, dy, pairs)
+    fi = np.asarray(frames)
+    cz = corr_z_pairs(dz[fi], pairs)            # (F, P) — only the chosen frames
+    cxy = corr_xy_pairs(dx[fi], dy[fi], pairs)
 
     cmap = plt.get_cmap("viridis")
     fig, (az, axy) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
@@ -123,8 +168,8 @@ def correlation_vs_distance(h5_path: str, times: Sequence[float] = (10, 50, 100)
         sel = d <= dmax if dmax > 0 else slice(None)
         col = cmap(k / max(1, len(frames) - 1))
         jit = (np.random.default_rng(seed + k).random(len(pairs)) - 0.5) * 0.12
-        az.scatter(d[sel], (cz[fr] + jit)[sel], s=4, alpha=0.25, color=col, label=f"{time[fr]:.0f} ps")
-        axy.scatter(d[sel], cxy[fr][sel], s=4, alpha=0.25, color=col, label=f"{time[fr]:.0f} ps")
+        az.scatter(d[sel], (cz[k] + jit)[sel], s=4, alpha=0.25, color=col, label=f"{time[fr]:.0f} ps")
+        axy.scatter(d[sel], cxy[k][sel], s=4, alpha=0.25, color=col, label=f"{time[fr]:.0f} ps")
     az.set_ylabel("C$^Z$ (sign)"); az.set_ylim(-1.3, 1.3); az.axhline(0, color="gray", lw=0.5)
     az.set_title("Z-axis correlation vs inter-residue distance")
     leg = az.legend(title="time", markerscale=3, fontsize=9)
@@ -137,7 +182,140 @@ def correlation_vs_distance(h5_path: str, times: Sequence[float] = (10, 50, 100)
     fig.tight_layout()
     return _save(out, fig, times_ps=np.array([time[f] for f in frames]),
                  distance_per_time=np.array(dist_per), pairs=pairs + 1,
-                 C_Z=cz[frames], C_XY=cxy[frames])
+                 C_Z=cz, C_XY=cxy)
+
+
+def _corr_at_time(coords, time, time_ps, pairs, ref, align):
+    """Distance, C^Z, C^XY for each pair at a single time. Memory-bounded (one
+    frame), so usable with very large pair counts."""
+    fr = int(np.argmin(np.abs(time - time_ps)))
+    dx, dy, dz = displacements(coords, ref, align)
+    cz = corr_z_pairs(dz[fr:fr + 1], pairs)[0]
+    cxy = corr_xy_pairs(dx[fr:fr + 1], dy[fr:fr + 1], pairs)[0]
+    c = coords[fr]
+    dist = np.linalg.norm(c[pairs[:, 0]] - c[pairs[:, 1]], axis=1)
+    return time[fr], dist, cz, cxy
+
+
+def correlation_hexbin(h5_path: str, time_ps: float = 50.0, pairs=None,
+                       node_subset=None, n_sample: int = 8000, ref: int = 0,
+                       align: bool = True, gridsize: int = 60,
+                       out: str = "data/results/instant_hexbin") -> str:
+    """Density (hexbin) of C^Z / C^XY vs distance at one time. Colour = number
+    of pairs in each hex (log scale), so the main distribution is visible even
+    with millions of overlapping points."""
+    coords, time, _ = load_trajectory(h5_path)
+    if pairs is None:
+        pairs = sample_pairs(coords.shape[1], n_sample, pool=node_subset)
+    t, dist, cz, cxy = _corr_at_time(coords, time, time_ps, pairs, ref, align)
+
+    fig, (az, axy) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+    for ax, y, ylab, title in ((az, cz, "C$^Z$ (sign)", "Z-axis (up/down)"),
+                               (axy, cxy, "C$^{XY}$ (cosine)", "XY-plane (in-plane)")):
+        hb = ax.hexbin(dist, y, gridsize=gridsize, cmap="viridis", bins="log", mincnt=1)
+        fig.colorbar(hb, ax=ax, label="pairs (log)")
+        ax.set_ylabel(ylab); ax.axhline(0, color="gray", lw=0.5)
+        ax.set_title(title + " correlation density vs distance")
+    axy.set_xlabel("inter-residue distance d (nm, at that time)")
+    fig.suptitle(f"Correlation density @ {t:.0f} ps  ({len(pairs)} pairs)")
+    fig.tight_layout()
+    return _save(out, fig, time_ps=t, distance=dist, C_Z=cz, C_XY=cxy)
+
+
+def correlation_binned(h5_path: str, time_ps: float = 50.0, pairs=None,
+                       node_subset=None, n_sample: int = 8000, ref: int = 0,
+                       align: bool = True, bin_width: float = 1.0,
+                       out: str = "data/results/instant_binned") -> str:
+    """Mean (+/- std) of C^Z / C^XY vs distance at one time, binned by distance.
+    Shows the trend clearly where the raw scatter saturates."""
+    coords, time, _ = load_trajectory(h5_path)
+    if pairs is None:
+        pairs = sample_pairs(coords.shape[1], n_sample, pool=node_subset)
+    t, dist, cz, cxy = _corr_at_time(coords, time, time_ps, pairs, ref, align)
+
+    edges = np.arange(0.0, dist.max() + bin_width, bin_width)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    idx = np.clip(np.digitize(dist, edges) - 1, 0, len(centers) - 1)
+    out_arr = {}
+    fig, (az, axy) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+    for ax, y, ylab, title in ((az, cz, "C$^Z$ mean", "Z-axis (up/down)"),
+                               (axy, cxy, "C$^{XY}$ mean", "XY-plane (in-plane)")):
+        mean = np.array([y[idx == b].mean() if np.any(idx == b) else np.nan
+                         for b in range(len(centers))])
+        std = np.array([y[idx == b].std() if np.any(idx == b) else np.nan
+                        for b in range(len(centers))])
+        ax.plot(centers, mean, "-o", ms=3, color="tab:blue")
+        ax.fill_between(centers, mean - std, mean + std, alpha=0.2, color="tab:blue")
+        ax.set_ylabel(ylab); ax.set_ylim(-1.1, 1.1); ax.axhline(0, color="gray", lw=0.5)
+        ax.set_title(title + " mean correlation vs distance")
+        out_arr[title] = mean
+    axy.set_xlabel("inter-residue distance d (nm, at that time)")
+    fig.suptitle(f"Binned mean correlation @ {t:.0f} ps  ({len(pairs)} pairs)")
+    fig.tight_layout()
+    return _save(out, fig, time_ps=t, bin_centers=centers,
+                 C_Z_mean=out_arr["Z-axis (up/down)"],
+                 C_XY_mean=out_arr["XY-plane (in-plane)"])
+
+
+def binned_multitime(h5_path: str, times: Sequence[float] = (0, 20, 40, 60, 80, 100),
+                     pairs=None, node_subset=None, n_sample: int = 8000,
+                     ref: int = 0, align: bool = True, bin_width: float = 1.0,
+                     realtime: bool = False,
+                     out: str = "data/results/binned_multitime") -> str:
+    """Binned-mean correlation vs distance, one line per time, overlaid on one
+    figure (C^Z panel + C^XY panel).
+
+    realtime=False (default): x-axis is the t=0 reference distance (fixed), so a
+        given x always means the same set of pairs -> lines comparable across time.
+    realtime=True: x-axis is each pair's ACTUAL distance at that time, so the
+        binning membership shifts as the protein deforms.
+    """
+    coords, time, _ = load_trajectory(h5_path)
+    frames = [int(np.argmin(np.abs(time - t))) for t in times]
+    if pairs is None:
+        pairs = sample_pairs(coords.shape[1], n_sample, pool=node_subset)
+    dx, dy, dz = displacements(coords, ref, align)
+    fi = np.asarray(frames)
+    cz = corr_z_pairs(dz[fi], pairs)            # (F, P) — only chosen times
+    cxy = corr_xy_pairs(dx[fi], dy[fi], pairs)
+
+    if realtime:
+        dists = [np.linalg.norm(coords[fr][pairs[:, 0]] - coords[fr][pairs[:, 1]], axis=1)
+                 for fr in frames]
+    else:
+        c0 = coords[ref]
+        d0 = np.linalg.norm(c0[pairs[:, 0]] - c0[pairs[:, 1]], axis=1)
+        dists = [d0] * len(frames)
+    dmax = max(d.max() for d in dists)
+    edges = np.arange(0.0, dmax + bin_width, bin_width)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+
+    cmap = plt.get_cmap("viridis")
+    fig, (az, axy) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+    saved = {}
+    for k, fr in enumerate(frames):
+        idx = np.clip(np.digitize(dists[k], edges) - 1, 0, len(centers) - 1)
+        mz = np.array([cz[k][idx == b].mean() if np.any(idx == b) else np.nan
+                       for b in range(len(centers))])
+        mxy = np.array([cxy[k][idx == b].mean() if np.any(idx == b) else np.nan
+                        for b in range(len(centers))])
+        col = cmap(k / max(1, len(frames) - 1))
+        lab = f"{time[fr]:.0f} ps"
+        az.plot(centers, mz, "-", color=col, label=lab)
+        axy.plot(centers, mxy, "-", color=col, label=lab)
+        saved[f"CZ_{int(round(time[fr]))}ps"] = mz
+        saved[f"CXY_{int(round(time[fr]))}ps"] = mxy
+    xlab = "at that time" if realtime else "at t=0"
+    az.set_ylabel("C$^Z$ mean"); az.set_ylim(-1.1, 1.1); az.axhline(0, color="gray", lw=0.5)
+    az.set_title("Z-axis (up/down) mean correlation vs distance")
+    az.legend(title="time", fontsize=8, ncol=2)
+    axy.set_ylabel("C$^{XY}$ mean"); axy.set_ylim(-1.1, 1.1); axy.axhline(0, color="gray", lw=0.5)
+    axy.set_title("XY-plane (in-plane) mean correlation vs distance")
+    axy.set_xlabel(f"inter-residue distance d (nm, {xlab})")
+    fig.suptitle(f"Binned mean correlation over time  ({len(pairs)} pairs)")
+    fig.tight_layout()
+    return _save(out, fig, bin_centers=centers, times_ps=np.array([time[f] for f in frames]),
+                 **saved)
 
 
 def distance_heatmap(h5_path: str, n_times: int = 10, exact: bool = True,

@@ -41,6 +41,7 @@ def run_simulation(model: str = "data/inputs/MODEL.txt",
                    target_nodes: str = "data/inputs/targetNode.txt",
                    mass: str = "data/inputs/mass.txt",
                    evector_mat: str = "data/inputs/evector.mat",
+                   meta: str = "data/inputs/nodes.npz",
                    out: str = "data/results/simulation_data.h5",
                    ET: float = 100.0, h: float = 0.1, zeta: float = 0.01,
                    E: float = 1000.0, A: float = 0.01,
@@ -174,9 +175,15 @@ def run_simulation(model: str = "data/inputs/MODEL.txt",
     if verbose:
         print(f"Done in {_time.time() - t_start:.2f}s")
 
+    node_chains = node_resids = None
+    if meta and os.path.exists(meta):
+        m = np.load(meta)
+        node_chains, node_resids = m["chain"], m["resid"]
+
     os.makedirs(os.path.dirname(out), exist_ok=True)
     _write_hdf5(out, nodes, elements, ID, evector, structure_data,
-                time_dmp, fapp_dmp, ext_dmp, fint_dmp, node_number, compress)
+                time_dmp, fapp_dmp, ext_dmp, fint_dmp, node_number, compress,
+                node_chains, node_resids)
 
     return {"steps": len(structure_data),
             "final_extension": ext_dmp[-1] if ext_dmp else None,
@@ -185,8 +192,12 @@ def run_simulation(model: str = "data/inputs/MODEL.txt",
 
 
 def _write_hdf5(out, nodes, elements, ID, evector, structure_data,
-                time_dmp, fapp_dmp, ext_dmp, fint_dmp, node_number, compress):
+                time_dmp, fapp_dmp, ext_dmp, fint_dmp, node_number, compress,
+                node_chains=None, node_resids=None):
     with h5py.File(out, "w") as f5:
+        if node_chains is not None:
+            f5.create_dataset("node_chains", data=np.array(node_chains, dtype="S4"))
+            f5.create_dataset("node_resids", data=np.asarray(node_resids, dtype=int))
         f5.create_dataset("time_steps", data=np.array(time_dmp))
         f5.create_dataset("applied_forces", data=np.array(fapp_dmp))
         f5.create_dataset("extensions", data=np.array(ext_dmp))

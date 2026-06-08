@@ -37,6 +37,7 @@ def run(pdb: str, tm: str, inputs_dir: str = "data/inputs",
                          target_nodes=pre["paths"]["target"],
                          mass=pre["paths"]["mass"],
                          evector_mat=pre["paths"]["evector"],
+                         meta=pre["paths"]["meta"],
                          out=h5, verbose=True, **sim_kwargs)
 
     figures = []

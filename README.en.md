@@ -71,6 +71,31 @@ Outputs land in `data/results/`: `simulation_data.h5` plus
 3-D animation (needs a display): `.venv/bin/python viz/animate.py`
 Clean generated products: `bash clean.sh`
 
+## Analysis
+
+Two correlation types: **C^Z** (out-of-plane, up/down, sign ±1) and **C^XY**
+(in-plane, cosine −1~+1). Each frame is Kabsch rigid-body aligned before
+displacements are taken, so whole-protein translation/rotation does not leak in.
+
+`cli.py analyze` makes four base figures (`instant_corr`, `distance_corr`,
+`anchor_corr`, `anchor_stack`). `memprotein.analysis` exposes more callable
+functions (all support `node_subset` for a single chain and an `align` toggle):
+
+| Function | What |
+|---|---|
+| `correlation_vs_distance` | scatter of correlation vs distance (pass `pairs` for all pairs) |
+| `correlation_hexbin` | density plot (readable when points overlap) |
+| `correlation_binned` | binned mean line at one time |
+| `binned_multitime` | binned-mean lines for several times overlaid; `realtime=` switches the x-axis between t=0 distance and each-time distance |
+| `chain_nodes(h5, "A")` | node indices of one chain (read from the result file) |
+
+`instant_one_chain.py` is a single-chain convenience script (edit the CONFIG
+block: `CHAIN`, `TIMES`, `N_SAMPLE` where `0` = all pairs).
+
+**Node identity**: `simulation_data.h5` stores each node's chain (`node_chains`)
+and residue number (`node_resids`), so chain/residue selection reads them
+directly and can never get out of sync with the coarse-grained node index.
+
 ## Method, in brief
 
 - **Coarse-graining**: one bead (the Cα) per amino-acid residue.

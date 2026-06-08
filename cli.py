@@ -90,6 +90,7 @@ def main():
         d = args.inputs_dir
         run_simulation(model=f"{d}/MODEL.txt", target_nodes=f"{d}/targetNode.txt",
                        mass=f"{d}/mass.txt", evector_mat=f"{d}/evector.mat",
+                       meta=f"{d}/nodes.npz",
                        out=args.out, ET=args.ET, h=args.h, Fmax=args.Fmax, E=args.E,
                        A=args.A, zeta=args.zeta, ramp_t0=args.ramp_t0,
                        ramp_t1=args.ramp_t1, unload_t1=args.unload_t1)
