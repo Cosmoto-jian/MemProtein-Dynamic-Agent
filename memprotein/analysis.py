@@ -18,6 +18,7 @@ translation/rotation does not leak in as spurious coordination.
 """
 
 import os
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -408,6 +409,135 @@ def anchor_scatter(h5_path: str, anchor: int = 1, time_ps: float = 50.0,
     fig.tight_layout()
     return _save(out, fig, anchor=anchor, time_ps=time[fr],
                  other_nodes=others + 1, distance=dist, C_Z=cz, C_XY=cxy)
+
+
+# --------------------------------------------------------------------------- #
+#  invariant correlation scale (geometry-normalized, loading-phase)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class GeomScales:
+    """Direction-resolved geometric size of a (membrane-aligned) structure."""
+    L_parallel: float   # sqrt(Gxx + Gyy): membrane-plane RMS extent (nm)
+    L_perp: float       # sqrt(Gzz): membrane-normal RMS extent (nm)
+    eta_shape: float    # L_parallel / L_perp: geometric anisotropy
+
+
+def geometry_scales(h5_path: str, ref: int = 0,
+                    node_subset: Optional[np.ndarray] = None) -> GeomScales:
+    """Membrane-plane / membrane-normal geometric scales from the shape tensor
+    (coordinate covariance) of the reference frame. Assumes coords are already
+    in a membrane frame (x-y = plane, z = normal), as produced by the OPM-based
+    preprocessing. Restrict to a subunit with `node_subset` (0-based indices)."""
+    coords, _, _ = load_trajectory(h5_path)
+    c = coords[ref]
+    if node_subset is not None:
+        c = c[np.asarray(node_subset)]
+    cc = c - c.mean(axis=0)
+    G = cc.T @ cc / len(cc)                       # 3x3 shape tensor (nm^2)
+    L_par = float(np.sqrt(G[0, 0] + G[1, 1]))
+    L_perp = float(np.sqrt(G[2, 2]))
+    return GeomScales(L_par, L_perp, L_par / L_perp)
+
+
+def _corr_length_1e(centers: np.ndarray, mean: np.ndarray) -> float:
+    """Correlation length xi: distance where the binned-mean correlation first
+    drops to 1/e of its smallest-distance (near-contact) value, linearly
+    interpolated.
+
+    NOTE: this 1/e-crossing rule is the CHOSEN definition of xi, pending
+    confirmation. It is assumption-light (no curve fit) and robust to noise.
+    To switch to e.g. a scipy exp-decay fit C(d)=A*exp(-d/xi), change only here.
+    """
+    valid = ~np.isnan(mean)
+    if valid.sum() < 2:
+        return float("nan")
+    c, m = centers[valid], mean[valid]
+    base = m[0]
+    if base <= 0:                                 # no positive near-contact signal
+        return float("nan")
+    thr = base / np.e
+    below = np.nonzero(m < thr)[0]
+    if len(below) == 0:                           # never decays within range
+        return float(c[-1])                       # -> lower bound on xi
+    k = below[0]
+    if k == 0:
+        return float(c[0])
+    x0, x1, y0, y1 = c[k - 1], c[k], m[k - 1], m[k]
+    return float(x0 + (thr - y0) * (x1 - x0) / (y1 - y0))
+
+
+def correlation_scales_loading(h5_path: str, t_load: float = 50.0,
+                               n_frames: int = 10, pairs: Optional[np.ndarray] = None,
+                               node_subset: Optional[np.ndarray] = None,
+                               n_sample: int = 8000, ref: int = 0,
+                               align: bool = True, bin_width: float = 1.0,
+                               out: str = "data/results/scale_loading") -> str:
+    """Loading-phase evolution of the geometry-normalized, direction-resolved
+    correlation lengths.
+
+    Only the LOADING half of the triangular protocol is used (0..t_load ps); the
+    unloading half is excluded so the two responses are not mixed. The window is
+    split into `n_frames` equal load levels (default 10, i.e. every t_load/10 ps).
+    For each level the in-plane (C^XY) and vertical (C^Z) correlation lengths
+    xi_parallel, xi_perp are extracted, then normalized by the geometric scales
+    L_parallel, L_perp -> dimensionless xi_hat, comparable across proteins.
+    chi_excess = xi_hat_parallel / xi_hat_perp is the shape-corrected directional
+    anisotropy (>1: in-plane long-range coupling beyond what shape explains).
+
+    Distances use the fixed t=0 reference geometry, so a bin always means the
+    same set of pairs across load levels (curves are comparable).
+    """
+    coords, time, _ = load_trajectory(h5_path)
+    if pairs is None:
+        pairs = sample_pairs(coords.shape[1], n_sample, pool=node_subset)
+    geom = geometry_scales(h5_path, ref=ref, node_subset=node_subset)
+
+    targets = np.linspace(t_load / n_frames, t_load, n_frames)
+    frames = [int(np.argmin(np.abs(time - t))) for t in targets]
+    t_real = np.array([time[f] for f in frames])
+
+    dx, dy, dz = displacements(coords, ref, align)
+    c0 = coords[ref]
+    d0 = np.linalg.norm(c0[pairs[:, 0]] - c0[pairs[:, 1]], axis=1)
+    edges = np.arange(0.0, d0.max() + bin_width, bin_width)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    idx = np.clip(np.digitize(d0, edges) - 1, 0, len(centers) - 1)
+
+    def binned(values: np.ndarray) -> np.ndarray:
+        return np.array([values[idx == b].mean() if np.any(idx == b) else np.nan
+                         for b in range(len(centers))])
+
+    xi_par, xi_perp = [], []
+    for fr in frames:
+        mxy = binned(corr_xy_pairs(dx[fr:fr + 1], dy[fr:fr + 1], pairs)[0])
+        mz = binned(corr_z_pairs(dz[fr:fr + 1], pairs)[0])
+        xi_par.append(_corr_length_1e(centers, mxy))    # in-plane -> parallel
+        xi_perp.append(_corr_length_1e(centers, mz))    # vertical  -> perp
+    xi_par, xi_perp = np.array(xi_par), np.array(xi_perp)
+    xih_par = xi_par / geom.L_parallel
+    xih_perp = xi_perp / geom.L_perp
+    chi_excess = xih_par / xih_perp
+
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(9, 8), sharex=True)
+    a1.plot(t_real, xih_par, "-o", color="tab:red", label=r"$\hat\xi_\parallel$ (in-plane)")
+    a1.plot(t_real, xih_perp, "-o", color="tab:blue", label=r"$\hat\xi_\perp$ (vertical)")
+    a1.set_ylabel("normalized correlation length  $\\hat\\xi$")
+    a1.set_title("Geometry-normalized correlation length vs loading")
+    a1.legend()
+    a1.text(0.02, 0.95,
+            f"L$\\parallel$={geom.L_parallel:.2f} nm   L$\\perp$={geom.L_perp:.2f} nm   "
+            f"$\\eta$={geom.eta_shape:.2f}",
+            transform=a1.transAxes, va="top", fontsize=9)
+    a2.plot(t_real, chi_excess, "-o", color="tab:green")
+    a2.axhline(1.0, color="gray", lw=0.6, ls="--")
+    a2.set_ylabel(r"$\chi_{excess}=\hat\xi_\parallel/\hat\xi_\perp$")
+    a2.set_xlabel("loading time (ps)  —  loading phase only")
+    a2.set_title("Shape-corrected anisotropy (>1: extra in-plane long-range coupling)")
+    fig.suptitle(f"Loading-phase correlation scaling  ({len(pairs)} pairs)")
+    fig.tight_layout()
+    return _save(out, fig, times_ps=t_real, xi_parallel=xi_par, xi_perp=xi_perp,
+                 xi_hat_parallel=xih_par, xi_hat_perp=xih_perp, chi_excess=chi_excess,
+                 L_parallel=geom.L_parallel, L_perp=geom.L_perp, eta_shape=geom.eta_shape)
 
 
 def anchor_stack(h5_path: str, anchors: Sequence[int] = tuple(range(1, 21)),

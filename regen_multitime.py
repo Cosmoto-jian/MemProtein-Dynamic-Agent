@@ -16,7 +16,9 @@ for name, h5 in JOBS:
     ti, tj = np.triu_indices(len(nodes), k=1)
     pairs = np.stack([nodes[ti], nodes[tj]], axis=1)
     print(f"[{name}] chain {chain}: {len(nodes)} nodes, {len(pairs)} pairs", flush=True)
-    out = an.binned_multitime(h5, times=(0, 20, 40, 60, 80, 100),
+    # Loading phase only (0-50 ps); the 60/80/100 ps frames fell in the
+    # unloading half and made the correlation length jump back -> excluded.
+    out = an.binned_multitime(h5, times=(0, 10, 20, 30, 40, 50),
                               pairs=pairs, realtime=True,
                               out=f"data/results/multitime_{name}_rt")
     print(f"[{name}] -> {out}", flush=True)
