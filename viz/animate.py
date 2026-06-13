@@ -186,8 +186,9 @@ def main():
     else:
         # Automatically search for HDF5 files
         search_paths = [
+            os.path.join(project_root, 'data', 'results'),  # default results dir
             '.',                    # Current working directory
-            script_dir,             # Viz directory
+            script_dir,             # viz directory
             project_root,           # Project root directory
         ]
 
