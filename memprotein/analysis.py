@@ -127,7 +127,7 @@ def sample_pairs(n_nodes: int, n_sample: int, seed: int = 0,
 
 def _save(out: str, fig, **npz):
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    fig.savefig(out + ".png", dpi=130)
+    fig.savefig(out + ".png", dpi=220)
     plt.close(fig)
     np.savez(out + ".npz", **npz)
     return out + ".png"

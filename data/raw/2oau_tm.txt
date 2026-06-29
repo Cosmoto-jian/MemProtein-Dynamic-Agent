@@ -1,0 +1,7 @@
+A - Tilt: 39 - TM segments: 1( 31- 48), 2( 73- 89)	
+B - Tilt: 34 - TM segments: 1( 31- 48), 2( 76- 89)	
+C - Tilt: 33 - TM segments: 1( 31- 48), 2( 76- 89)	
+D - Tilt: 34 - TM segments: 1( 31- 48), 2( 74- 89)	
+E - Tilt: 36 - TM segments: 1( 31- 48), 2( 74- 89)	
+F - Tilt: 43 - TM segments: 1( 31- 48), 2( 73- 89)	
+G - Tilt: 29 - TM segments: 1( 31- 45), 2( 76- 89)

@@ -8,15 +8,22 @@ and saves the xi_hat(load) evolution plus the chi_excess curve.
 
 Run:  .venv/bin/python loading_scales.py
 """
+import glob
+import os
+import re
+import sys
 from collections import Counter
 
 import numpy as np
 
 from memprotein import analysis as an
 
-JOBS = [("6b3r", "data/results/sim_6b3r.h5"),
-        ("6w7b", "data/results/sim_6w7b.h5"),
-        ("7aa5", "data/results/sim_7aa5.h5")]
+# Pick the peak force to analyze (matches sim_<id>_F<force>.h5). Default 0.01.
+FORCE = sys.argv[1] if len(sys.argv) > 1 else "0.01"
+_pat = re.compile(rf"sim_(.+)_F{re.escape(FORCE)}\.h5$")
+JOBS = sorted((m.group(1), p) for p in glob.glob(f"data/results/sim_*_F{FORCE}.h5")
+              if (m := _pat.match(os.path.basename(p))))
+print(f"analyzing force F={FORCE}: {len(JOBS)} proteins\n")
 
 for name, h5 in JOBS:
     chains, _ = an.load_node_meta(h5)
@@ -30,6 +37,6 @@ for name, h5 in JOBS:
           f"eta={geom.eta_shape:.2f}", flush=True)
     out = an.correlation_scales_loading(h5, t_load=50.0, n_frames=10,
                                         pairs=pairs, node_subset=nodes,
-                                        out=f"data/results/scale_{name}")
+                                        out=f"data/results/scale_{name}_F{FORCE}")
     print(f"[{name}] -> {out}", flush=True)
 print("ALL DONE", flush=True)
