@@ -129,7 +129,11 @@ def _save(out: str, fig, **npz):
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out + ".png", dpi=220)
     plt.close(fig)
-    np.savez(out + ".npz", **npz)
+    if npz:
+        # NPZ (non-visual) always lands in data/results/, never in data/figures/
+        npz_path = out.replace("data/figures/", "data/results/") + ".npz"
+        os.makedirs(os.path.dirname(npz_path) or ".", exist_ok=True)
+        np.savez(npz_path, **npz)
     return out + ".png"
 
 
