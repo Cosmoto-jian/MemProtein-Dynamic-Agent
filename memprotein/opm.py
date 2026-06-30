@@ -15,8 +15,10 @@ annotations and write them as text files that ``parse_opm_tm_text``
 from __future__ import annotations
 
 import os
+import re
 import time
-from typing import Dict, List, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Set
 
 import requests
 
@@ -28,21 +30,37 @@ _API_DELAY = 0.15
 
 
 # ---------------------------------------------------------------------------
+# Result dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FetchResult:
+    pdb_id: str
+    status: str = "ok"                  # "ok", "warn", "skip"
+    reason: str = ""
+    pdb_path: str = ""
+    tm_path: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
 
-def download_pdb(pdb_id: str, out_path: str, *, overwrite: bool = False) -> str:
+def download_pdb(pdb_id: str, out_path: str, *, overwrite: bool = False) -> str | None:
     """Download the OPM-oriented PDB for *pdb_id* and write it to *out_path*.
 
-    Returns *out_path*.  Existing files are skipped unless *overwrite* is
-    ``True``.
+    Returns *out_path* on success, ``None`` on failure.
+    Existing files are skipped unless *overwrite* is ``True``.
     """
     if os.path.exists(out_path) and not overwrite:
         return out_path
 
     url = OPM_PDB_URL.format(pdb_id=pdb_id.lower())
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
+    except requests.RequestException:
+        return None
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "wb") as fh:
@@ -50,23 +68,21 @@ def download_pdb(pdb_id: str, out_path: str, *, overwrite: bool = False) -> str:
     return out_path
 
 
-def fetch_tm_annotation(pdb_id: str) -> str:
-    """Return the transmembrane-segment text for *pdb_id* (the same format
-    that the parser in ``preprocess.parse_opm_tm_text`` expects).
+def fetch_tm_annotation(pdb_id: str) -> str | None:
+    """Return the transmembrane-segment text for *pdb_id*, or ``None`` if the
+    protein is not in OPM or has no TM segments.
 
-    One line per chain::
+    Output format (compatible with ``preprocess.parse_opm_tm_text``)::
 
         A - Tilt: 22 - TM segments: 1( 581- 599), 2( 610- 629), ...
-
-    If the protein has no TM annotation, an empty string is returned.
     """
     protein = _get_protein_detail(pdb_id)
     if protein is None:
-        raise ValueError(f"Protein {pdb_id!r} not found in OPM database")
+        return None
 
     subunits = protein.get("subunits") or []
     if not subunits:
-        return ""
+        return None
 
     lines: List[str] = []
     for sub in subunits:
@@ -83,58 +99,178 @@ def fetch_tm_annotation(pdb_id: str) -> str:
 
 def ensure_raw_inputs(
     pdb_ids: List[str], raw_dir: str = "data/raw", *, overwrite: bool = False
-) -> Dict[str, Dict[str, str]]:
-    """Make sure every PDB in *pdb_ids* has a ``.pdb`` and ``_tm.txt`` file
-    inside *raw_dir*.  Existing files are skipped unless *overwrite* is set.
+) -> List[FetchResult]:
+    """Download PDB + TM annotation for every *pdb_id* into *raw_dir*.
 
-    Returns a mapping::
+    Existing files are skipped unless *overwrite* is set.  Each protein gets
+    a health check after download (chain consistency, membrane coverage).
 
-        {pdb_id: {"pdb": "/abs/path/to/1bl8.pdb",
-                  "tm":  "/abs/path/to/1bl8_tm.txt"}}
+    Returns a list of ``FetchResult`` — one per input *pdb_id*:
+
+    * ``ok``   — ready to simulate
+    * ``warn`` — usable but with a warning (e.g. chain-id mismatch);
+                 simulation will try but results may be incomplete
+    * ``skip`` — excluded; the reason is in ``.reason``
     """
     raw_dir = os.path.abspath(raw_dir)
-    result: Dict[str, Dict[str, str]] = {}
+    results: List[FetchResult] = []
 
-    for pid in pdb_ids:
+    for i, pid in enumerate(pdb_ids):
         pid_l = pid.lower()
         pdb_path = os.path.join(raw_dir, f"{pid_l}.pdb")
         tm_path = os.path.join(raw_dir, f"{pid_l}_tm.txt")
 
-        # PDB
-        download_pdb(pid_l, pdb_path, overwrite=overwrite)
-        print(f"[{pid}] PDB -> {pdb_path}")
+        # ----   PDB  ----
+        dl = download_pdb(pid_l, pdb_path, overwrite=overwrite)
+        if dl is None:
+            results.append(FetchResult(pid, "skip", "PDB download failed"))
+            print(f"[{pid}] SKIP — PDB download failed")
+            continue
+        print(f"[{pid}] PDB  -> {pdb_path}")
 
-        # TM annotation
+        # ----   TM annotation  ----
         if not os.path.exists(tm_path) or overwrite:
-            text = fetch_tm_annotation(pid_l)
-            if text:
-                with open(tm_path, "w") as fh:
-                    fh.write(text)
-                print(f"[{pid}] TM  -> {tm_path}")
-            else:
-                print(f"[{pid}] (no TM segments — skipping tm.txt)")
+            try:
+                text = fetch_tm_annotation(pid_l)
+            except requests.RequestException:
+                results.append(FetchResult(pid, "skip", "API unreachable"))
+                print(f"[{pid}] SKIP — OPM API unreachable")
+                _maybe_sleep(i, pdb_ids)
+                continue
 
-        result[pid] = {"pdb": pdb_path, "tm": tm_path}
-        if pid != pdb_ids[-1]:
-            time.sleep(_API_DELAY)
+            if text is None:
+                results.append(FetchResult(pid, "skip",
+                                           "not in OPM or no TM annotation"))
+                print(f"[{pid}] SKIP — no transmembrane annotation in OPM")
+                _maybe_sleep(i, pdb_ids)
+                continue
 
-    return result
+            if not text.strip():
+                results.append(FetchResult(pid, "skip", "no TM segments"))
+                print(f"[{pid}] SKIP — no TM segments")
+                _maybe_sleep(i, pdb_ids)
+                continue
+
+            with open(tm_path, "w") as fh:
+                fh.write(text)
+            print(f"[{pid}] TM   -> {tm_path}")
+
+        # ----   Health check  ----
+        status, reason = _validate(pdb_path, tm_path)
+        results.append(FetchResult(pid, status, reason, pdb_path, tm_path))
+        if status == "warn":
+            print(f"[{pid}] WARN — {reason}")
+        elif status == "skip":
+            print(f"[{pid}] SKIP — {reason}")
+        else:
+            print(f"[{pid}] OK")
+
+        _maybe_sleep(i, pdb_ids)
+
+    return results
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+# Regexes for lightweight PDB parsing (avoid import from .preprocess to keep
+# this module standalone).
+_PDB_CA_RE = re.compile(r"^(?:ATOM|HETATM).{7}CA .{4}[A-Z]"  # skip DUM
+                        r"(.{5})"                              # residue number
+                        r".{5}(.)")                             # chain
+_TM_HEADER_RE = re.compile(r"^\s*([A-Za-z0-9])\s*-.*?TM segments\s*:(.*)$")
+
+
+def _extract_pdb_chains(pdb_path: str) -> Set[str]:
+    """Return the set of chain IDs that have at least one C-alpha atom.
+
+    Excludes HETATM records (lipids, ligands, UNK fragments) to match the
+    ATOM-only default of ``preprocess.parse_pdb_ca``."""
+    chains: Set[str] = set()
+    try:
+        with open(pdb_path) as fh:
+            for line in fh:
+                if line[:4] != "ATOM":          # only ATOM records (ignore HETATM)
+                    continue
+                if line[12:16].strip() != "CA" or line[17:20].strip() == "DUM":
+                    continue
+                chains.add(line[21])
+    except OSError:
+        pass
+    return chains
+
+
+def _extract_tm_chains(tm_path: str) -> Set[str]:
+    """Return the set of chain IDs mentioned in a tm.txt file."""
+    chains: Set[str] = set()
+    try:
+        with open(tm_path) as fh:
+            for line in fh:
+                m = _TM_HEADER_RE.match(line)
+                if m:
+                    chains.add(m.group(1))
+    except OSError:
+        pass
+    return chains
+
+
+def _validate(pdb_path: str, tm_path: str) -> tuple[str, str]:
+    """Check consistency between a PDB file and its tm.txt.
+
+    Returns ``(status, reason)``:
+        ok   — chains match, everything consistent
+        warn — chains partially overlap (possible renaming)
+        skip — zero overlap (annotation is for a different assembly)
+    """
+    pdb_chains = _extract_pdb_chains(pdb_path)
+    tm_chains = _extract_tm_chains(tm_path)
+
+    if not pdb_chains:
+        return "skip", "PDB contains no C-alpha atoms"
+    if not tm_chains:
+        return "skip", "tm.txt contains no chain annotations"
+
+    common = pdb_chains & tm_chains
+    pdb_only = pdb_chains - tm_chains
+    tm_only = tm_chains - pdb_chains
+
+    if not common:
+        msg = (f"chain ID mismatch: PDB has {sorted(pdb_chains)}, "
+               f"tm.txt has {sorted(tm_chains)} — "
+               "likely different assembly numbering; run without --fetch to keep current tm.txt")
+        return "skip", msg
+
+    if tm_only:
+        msg = (f"some API chains not in PDB: {sorted(tm_only)} "
+               f"(PDB chains: {sorted(pdb_chains)})")
+        return "warn", msg
+    if pdb_only:
+        msg = (f"some PDB chains not in TM annotation: {sorted(pdb_only)}")
+        return "warn", msg
+
+    return "ok", ""
+
+
+def _maybe_sleep(idx: int, ids: list) -> None:
+    """Sleep between API calls unless this is the last one."""
+    if idx < len(ids) - 1:
+        time.sleep(_API_DELAY)
+
+
 def _get_protein_detail(pdb_id: str) -> dict | None:
     """Retrieve the full protein detail from the OPM API (includes embedded
-    ``subunits`` with ``segment`` strings)."""
+    ``subunits`` with ``segment`` strings).  Returns ``None`` on any error."""
     numeric_id = _search_protein(pdb_id)
     if numeric_id is None:
         return None
 
-    url = f"{OPM_API}/primary_structures/{numeric_id}"
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(f"{OPM_API}/primary_structures/{numeric_id}",
+                            timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException:
+        return None
     return resp.json()
 
 
@@ -144,10 +280,16 @@ def _search_protein(pdb_id: str) -> int | None:
     The list endpoint does **not** embed TM segments; only the detail
     endpoint (by numeric id) does, so this two-step dance is necessary.
     """
-    url = f"{OPM_API}/primary_structures"
-    resp = requests.get(url, params={"search": pdb_id.lower(), "page_size": 1},
-                        timeout=30)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(
+            f"{OPM_API}/primary_structures",
+            params={"search": pdb_id.lower(), "page_size": 1},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except requests.RequestException:
+        return None
+
     data = resp.json()
     objects: List[dict] = data.get("objects", [])
     if not objects:
