@@ -35,6 +35,6 @@ for name, h5 in JOBS:
     print(f"[{name}] chain {chain}: {len(nodes)} nodes, {len(pairs)} pairs", flush=True)
     out = an.binned_multitime(h5, times=(0, 10, 20, 30, 40, 50),
                               pairs=pairs, realtime=True,
-                              out=f"data/results/multitime_{name}_F{FORCE}")
+                              out=f"data/figures/multitime_{name}_F{FORCE}")
     print(f"[{name}] -> {out}", flush=True)
 print("ALL DONE", flush=True)

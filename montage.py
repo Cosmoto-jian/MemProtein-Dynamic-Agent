@@ -3,7 +3,7 @@
 
 Layout: each protein is a vertical strip of 3 (force 0.01 / 0.05 / 0.1 top->bottom).
 The 12 strips are arranged in 2 banks of 6 proteins (columns) so the result is not
-absurdly wide. Output: data/results/montage_multitime.png
+absurdly wide. Output: data/figures/montage_multitime.png
 """
 import glob
 import os
@@ -11,12 +11,12 @@ import re
 
 import matplotlib.pyplot as plt
 
-RES = "data/results"
+FIG = "data/figures"
 FORCES = ["0.01", "0.05", "0.1"]
 
 pat = re.compile(r"multitime_(.+)_F0\.01\.png$")
 proteins = sorted(pat.match(os.path.basename(p)).group(1)
-                  for p in glob.glob(f"{RES}/multitime_*_F0.01.png"))
+                  for p in glob.glob(f"{FIG}/multitime_*_F0.01.png"))
 print(f"{len(proteins)} proteins: {proteins}")
 
 PER_BANK = 6
@@ -33,7 +33,7 @@ for b, bank in enumerate(banks):
         r = b * len(FORCES) + fi
         for c, pid in enumerate(bank):
             ax = axes[r, c]
-            img = plt.imread(f"{RES}/multitime_{pid}_F{F}.png")
+            img = plt.imread(f"{FIG}/multitime_{pid}_F{F}.png")
             ax.imshow(img)
             ax.set_title(f"{pid}   F={F} pN", fontsize=11, fontweight="bold")
 
@@ -42,6 +42,6 @@ fig.suptitle("Binned mean correlation vs inter-residue distance  "
              "lines = loading time 0-50 ps)",
              fontsize=14, y=0.997)
 fig.tight_layout(rect=(0, 0, 1, 0.99))
-out = f"{RES}/montage_multitime.png"
+out = f"{FIG}/montage_multitime.png"
 fig.savefig(out, dpi=200, bbox_inches="tight")
 print(f"-> {out}")

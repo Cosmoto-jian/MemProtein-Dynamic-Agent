@@ -37,6 +37,6 @@ for name, h5 in JOBS:
           f"eta={geom.eta_shape:.2f}", flush=True)
     out = an.correlation_scales_loading(h5, t_load=50.0, n_frames=10,
                                         pairs=pairs, node_subset=nodes,
-                                        out=f"data/results/scale_{name}_F{FORCE}")
+                                        out=f"data/figures/scale_{name}_F{FORCE}")
     print(f"[{name}] -> {out}", flush=True)
 print("ALL DONE", flush=True)

@@ -141,7 +141,7 @@ def correlation_vs_distance(h5_path: str, times: Sequence[float] = (10, 50, 100)
                             seed: int = 0, align: bool = True,
                             node_subset: Optional[np.ndarray] = None,
                             pairs: Optional[np.ndarray] = None,
-                            out: str = "data/results/instant_corr") -> str:
+                            out: str = "data/figures/instant_corr") -> str:
     """Scatter of C^Z / C^XY vs inter-residue distance (at that time), for
     several times overlaid.
 
@@ -201,7 +201,7 @@ def _corr_at_time(coords, time, time_ps, pairs, ref, align):
 def correlation_hexbin(h5_path: str, time_ps: float = 50.0, pairs=None,
                        node_subset=None, n_sample: int = 8000, ref: int = 0,
                        align: bool = True, gridsize: int = 60,
-                       out: str = "data/results/instant_hexbin") -> str:
+                       out: str = "data/figures/instant_hexbin") -> str:
     """Density (hexbin) of C^Z / C^XY vs distance at one time. Colour = number
     of pairs in each hex (log scale), so the main distribution is visible even
     with millions of overlapping points."""
@@ -226,7 +226,7 @@ def correlation_hexbin(h5_path: str, time_ps: float = 50.0, pairs=None,
 def correlation_binned(h5_path: str, time_ps: float = 50.0, pairs=None,
                        node_subset=None, n_sample: int = 8000, ref: int = 0,
                        align: bool = True, bin_width: float = 1.0,
-                       out: str = "data/results/instant_binned") -> str:
+                       out: str = "data/figures/instant_binned") -> str:
     """Mean (+/- std) of C^Z / C^XY vs distance at one time, binned by distance.
     Shows the trend clearly where the raw scatter saturates."""
     coords, time, _ = load_trajectory(h5_path)
@@ -262,7 +262,7 @@ def binned_multitime(h5_path: str, times: Sequence[float] = (0, 20, 40, 60, 80, 
                      pairs=None, node_subset=None, n_sample: int = 8000,
                      ref: int = 0, align: bool = True, bin_width: float = 1.0,
                      realtime: bool = False,
-                     out: str = "data/results/binned_multitime") -> str:
+                     out: str = "data/figures/binned_multitime") -> str:
     """Binned-mean correlation vs distance, one line per time, overlaid on one
     figure (C^Z panel + C^XY panel).
 
@@ -323,7 +323,7 @@ def distance_heatmap(h5_path: str, n_times: int = 10, exact: bool = True,
                      n_sample: int = 300000, bin_width: float = 1.0,
                      dmax: float = 0.0, min_count: int = 50, chunk: int = 25000,
                      ref: int = 0, seed: int = 0, align: bool = True,
-                     out: str = "data/results/distance_corr") -> str:
+                     out: str = "data/figures/distance_corr") -> str:
     """Mean correlation binned by distance, as a time x distance heatmap."""
     coords, time, _ = load_trajectory(h5_path)
     T, N = coords.shape[0], coords.shape[1]
@@ -381,7 +381,7 @@ def distance_heatmap(h5_path: str, n_times: int = 10, exact: bool = True,
 
 def anchor_scatter(h5_path: str, anchor: int = 1, time_ps: float = 50.0,
                    ref: int = 0, dmax: float = 0.0, align: bool = True,
-                   out: str = "data/results/anchor_corr") -> str:
+                   out: str = "data/figures/anchor_corr") -> str:
     """One anchor residue vs every other residue (no sampling), at one time."""
     coords, time, _ = load_trajectory(h5_path)
     N = coords.shape[1]
@@ -471,7 +471,7 @@ def correlation_scales_loading(h5_path: str, t_load: float = 50.0,
                                node_subset: Optional[np.ndarray] = None,
                                n_sample: int = 8000, ref: int = 0,
                                align: bool = True, bin_width: float = 1.0,
-                               out: str = "data/results/scale_loading") -> str:
+                               out: str = "data/figures/scale_loading") -> str:
     """Loading-phase evolution of the geometry-normalized, direction-resolved
     correlation lengths.
 
@@ -543,7 +543,7 @@ def correlation_scales_loading(h5_path: str, t_load: float = 50.0,
 def anchor_stack(h5_path: str, anchors: Sequence[int] = tuple(range(1, 21)),
                  time_ps: float = 50.0, component: str = "XY", ref: int = 0,
                  dmax: float = 0.0, align: bool = True,
-                 out: str = "data/results/anchor_stack") -> str:
+                 out: str = "data/figures/anchor_stack") -> str:
     """One distance-vs-correlation panel per anchor, stacked for comparison."""
     coords, time, _ = load_trajectory(h5_path)
     N = coords.shape[1]
