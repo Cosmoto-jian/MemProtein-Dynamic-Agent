@@ -1,0 +1,5 @@
+A - Tilt: 28 - TM segments: 1(17-46),2(69-93)	
+B - Tilt: 27 - TM segments: 1(17-46),2(69-93)	
+C - Tilt: 26 - TM segments: 1(17-46),2(69-93)	
+D - Tilt: 27 - TM segments: 1(14-46),2(69-93)	
+E - Tilt: 28 - TM segments: 1(17-46),2(69-93)
