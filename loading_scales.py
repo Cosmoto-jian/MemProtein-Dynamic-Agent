@@ -26,17 +26,18 @@ JOBS = sorted((m.group(1), p) for p in glob.glob(f"data/results/sim_*_F{FORCE}.h
 print(f"analyzing force F={FORCE}: {len(JOBS)} proteins\n")
 
 for name, h5 in JOBS:
+    geom = an.geometry_scales(h5)           # whole-protein η (all nodes)
     chains, _ = an.load_node_meta(h5)
-    chain = Counter(chains).most_common(1)[0][0]      # representative subunit
+    chain = Counter(chains).most_common(1)[0][0]   # largest chain for pairs
     nodes = an.chain_nodes(h5, chain)
     ti, tj = np.triu_indices(len(nodes), k=1)
     pairs = np.stack([nodes[ti], nodes[tj]], axis=1)
-    geom = an.geometry_scales(h5, node_subset=nodes)
-    print(f"[{name}] chain {chain}: {len(nodes)} nodes, {len(pairs)} pairs | "
+    print(f"[{name}] {len(nodes)} nodes ({len(chains)} chains, representative={chain}) "
+          f"{len(pairs)} pairs | "
           f"L_par={geom.L_parallel:.2f} L_perp={geom.L_perp:.2f} "
           f"eta={geom.eta_shape:.2f}", flush=True)
     out = an.correlation_scales_loading(h5, t_load=50.0, n_frames=10,
-                                        pairs=pairs, node_subset=nodes,
+                                        pairs=pairs, node_subset=None,
                                         out=f"data/figures/scale_{name}_F{FORCE}")
     print(f"[{name}] -> {out}", flush=True)
 print("ALL DONE", flush=True)
