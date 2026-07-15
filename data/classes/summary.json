@@ -1,0 +1,22 @@
+{
+  "extreme_flat": {
+    "n": 3,
+    "eta_range": "(0.00, 0.25]"
+  },
+  "very_flat": {
+    "n": 414,
+    "eta_range": "(0.25, 0.50]"
+  },
+  "moderate": {
+    "n": 740,
+    "eta_range": "(0.50, 0.75]"
+  },
+  "slight_flat": {
+    "n": 878,
+    "eta_range": "(0.75, 1.00]"
+  },
+  "rod": {
+    "n": 1730,
+    "eta_range": "(1.00, 999.00]"
+  }
+}
